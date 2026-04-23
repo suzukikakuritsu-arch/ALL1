@@ -1,4 +1,165 @@
 /-!
+# Lifting Selberg → Riemann (structural schema)
+
+Goal:
+  Reproduce Selberg mechanism in arithmetic setting
+
+Selberg side (works):
+  geometry → Laplacian → spectrum ↔ zeros
+
+Riemann side (target):
+  arithmetic space → operator → spectrum ↔ ζ zeros
+
+This file encodes the lifting blueprint.
+-/
+
+noncomputable section
+open Classical Real Complex
+
+-- =========================================================
+-- ■ 1. Selberg構造（成功モデル）
+-- =========================================================
+
+axiom geodesic : Type
+axiom length : geodesic → ℝ
+axiom primitive : geodesic → Prop
+
+-- Selbergゼータ
+axiom SelbergZeta : ℂ → ℂ
+
+-- スペクトル
+axiom r : ℕ → ℝ
+
+-- 対応（成立している）
+axiom selberg_correspondence :
+  ∀ n,
+    SelbergZeta (1/2 + Complex.I * r n) = 0
+
+
+-- =========================================================
+-- ■ 2. Riemann側に必要な構造
+-- =========================================================
+
+/-
+対応関係：
+
+geodesic γ        ↔ prime p
+length(γ)         ↔ log p
+-/
+
+axiom prime : ℕ → Prop
+
+-- log p
+def logp (n : ℕ) : ℝ :=
+  Real.log n
+
+-- =========================================================
+-- ■ 3. リーマンゼータ（Euler積）
+-- =========================================================
+
+noncomputable def RiemannZeta (s : ℂ) : ℂ :=
+  ∏' p : ℕ,
+    if prime p then (1 - p^(-s))⁻¹ else 1
+
+-- =========================================================
+-- ■ 4. 「幾何の代替」が必要
+-- =========================================================
+
+/-
+Selbergでは：
+  空間 X = Γ\ℍ が存在
+
+Riemannでは：
+  対応する空間が未確定
+-/
+
+axiom ArithmeticSpace : Type
+
+axiom measure : Measure ArithmeticSpace
+
+def H := Lp ℂ 2 measure
+
+-- =========================================================
+-- ■ 5. 作用素（これが未構成）
+-- =========================================================
+
+/-
+欲しいもの：
+
+自己共役作用素 L で
+  spectrum(L) = {γ_n}
+-/
+
+axiom L : H → H
+
+axiom self_adjoint :
+  ∀ f g, inner (L f) g = inner f (L g)
+
+-- =========================================================
+-- ■ 6. トレース公式（最重要）
+-- =========================================================
+
+/-
+Selberg:
+  spectrum = geodesic sum
+
+Riemannで欲しい形：
+-/
+
+axiom trace_formula_R :
+  ∀ h,
+    (∑ n, h (γ n))
+    =
+    (integral h)
+    +
+    (∑ p, log p * h (log p))
+
+-- γ_n = ζ零点の虚部
+axiom γ : ℕ → ℝ
+
+-- =========================================================
+-- ■ 7. 核心仮定（Hilbert–Pólya）
+-- =========================================================
+
+axiom HP_operator :
+  spectrum L = {x | ∃ n, x = γ n}
+
+-- =========================================================
+-- ■ 8. RH（帰結）
+-- =========================================================
+
+theorem RH_from_lifting :
+  HP_operator →
+  ∀ n,
+    Complex.re (1/2 + Complex.I * γ n) = 1/2 :=
+by
+  intro h n
+  simp
+
+-- =========================================================
+-- ■ 9. どこで詰まっているか
+-- =========================================================
+
+/-
+未解決ポイント：
+
+(1) ArithmeticSpace の具体構成
+(2) L の明示定義
+(3) trace_formula_R の証明
+(4) spectrum = ζ零点 の一致
+
+Selbergでは全部成立
+Riemannでは全部未成立
+-/
+
+-- =========================================================
+-- ■ 10. 本質
+-- =========================================================
+
+/-
+RH ≡ “Selberg構造を数論空間に移植できるか”
+-/
+/-!
 # Selberg Zeta Function → Spectrum Correspondence
 
 This is the cleanest known analogue of the Riemann zeta structure.
