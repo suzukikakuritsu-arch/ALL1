@@ -12,6 +12,216 @@ def generate_gue(N):
     A = np.random.randn(N, N)
     return (A + A.T) / 2
 
+np.random.seed(0)
+
+M = 30
+eigvals = np.linalg.eigvalsh(generate_gue(M))
+eigvals = np.sort(eigvals)
+
+# 正規化（小さめスケール）
+eigvals = eigvals - eigvals.min()
+eigvals = eigvals / eigvals.max()
+eigvals = eigvals * 6.0
+
+k = 6
+target_lambda = eigvals[:k]
+
+# =========================================================
+# ■ 2. 空間
+# =========================================================
+
+N = 160
+L = 12.0
+x = np.linspace(-L, L, N)
+dx = x[1] - x[0]
+
+diag = np.ones(N) * (-2.0)
+off  = np.ones(N-1)
+
+Lap = diags([off, diag, off], [-1, 0, 1]) / dx**2
+Lap = -Lap
+
+# =========================================================
+# ■ 3. 基底
+# =========================================================
+
+def basis(x, K=10):
+    B = [np.ones_like(x)]
+    for k_ in range(1, K):
+        B.append(np.sin(k_ * np.pi * x / L))
+        B.append(np.cos(k_ * np.pi * x / L))
+    return np.vstack(B)
+
+B = basis(x)
+nb = B.shape[0]
+
+# =========================================================
+# ■ 4. パラメータ分解
+# =========================================================
+
+def unpack(p):
+    c = p[:-1]
+    alpha = p[-1]
+    return c, alpha
+
+def potential(c, alpha):
+    return alpha * np.dot(c, B)
+
+# =========================================================
+# ■ 5. 固有値計算
+# =========================================================
+
+def compute_eigs(p):
+    c, alpha = unpack(p)
+
+    V = potential(c, alpha)
+    H = Lap + diags(V, 0)
+
+    try:
+        vals = eigsh(
+            H,
+            k=k,
+            which='SM',
+            return_eigenvectors=False,
+            tol=1e-3
+        )
+    except:
+        return np.ones(k) * 1e6
+
+    vals = np.sort(np.asarray(vals).reshape(-1))
+
+    if len(vals) < k:
+        vals = np.pad(vals, (0, k - len(vals)), mode='edge')
+
+    return vals[:k]
+
+# =========================================================
+# ■ 6. loss（slope拘束版）
+# =========================================================
+
+def loss(p):
+    vals = compute_eigs(p)
+
+    if not np.all(np.isfinite(vals)):
+        return 1e6
+
+    # -------------------------
+    # ■ gap
+    # -------------------------
+    gap_v = np.diff(vals)
+    gap_t = np.diff(target_lambda)
+    err_gap = np.sum((gap_v - gap_t)**2)
+
+    # -------------------------
+    # ■ anchor
+    # -------------------------
+    err_anchor = (vals[0] - target_lambda[0])**2
+
+    # -------------------------
+    # ■ slope（最重要）
+    # -------------------------
+    slope_v = (vals[-1] - vals[0]) / (k - 1)
+    slope_t = (target_lambda[-1] - target_lambda[0]) / (k - 1)
+    err_slope = (slope_v - slope_t)**2
+
+    # -------------------------
+    # ■ 統計
+    # -------------------------
+    gap_vn = gap_v / (np.mean(gap_v) + 1e-8)
+    gap_tn = gap_t / (np.mean(gap_t) + 1e-8)
+    err_stat = np.mean((np.sort(gap_vn) - np.sort(gap_tn))**2)
+
+    # -------------------------
+    # ■ FFT
+    # -------------------------
+    fft_v = np.abs(np.fft.rfft(vals))
+    fft_t = np.abs(np.fft.rfft(target_lambda))
+
+    fft_v /= np.sum(fft_v) + 1e-8
+    fft_t /= np.sum(fft_t) + 1e-8
+
+    err_fft = np.sum((fft_v - fft_t)**2)
+
+    # -------------------------
+    # ■ 正則化（弱め）
+    # -------------------------
+    c, alpha = unpack(p)
+    V = potential(c, alpha)
+
+    smooth = np.sum((np.diff(V, 2))**2)
+    size = np.sum(c**2)
+
+    return (
+        2.0 * err_gap +
+        1.0 * err_stat +
+        1.0 * err_fft +
+        5.0 * err_anchor +
+        5.0 * err_slope +   # ★ 勾配拘束
+        5e-5 * smooth +
+        1e-6 * size
+    )
+
+# =========================================================
+# ■ 7. 最適化
+# =========================================================
+
+p0 = np.concatenate([
+    0.01 * np.random.randn(nb),
+    np.array([1.0])  # alpha
+])
+
+res = minimize(
+    loss,
+    p0,
+    method='L-BFGS-B',
+    options={'maxiter': 150}
+)
+
+p_opt = res.x
+
+# =========================================================
+# ■ 8. 結果
+# =========================================================
+
+vals = compute_eigs(p_opt)
+
+print("target:", target_lambda)
+print("approx:", vals)
+print("error:", np.linalg.norm(vals - target_lambda))
+
+# =========================================================
+# ■ 9. 可視化
+# =========================================================
+
+c_opt, alpha_opt = unpack(p_opt)
+V_opt = potential(c_opt, alpha_opt)
+
+plt.figure()
+plt.plot(x, V_opt)
+plt.title(f"Recovered Potential (alpha={alpha_opt:.3f})")
+plt.grid()
+
+plt.figure()
+plt.plot(target_lambda, 'o-', label="target")
+plt.plot(vals, 'x-', label="approx")
+plt.legend()
+plt.title("Spectrum (with slope constraint)")
+
+plt.show()
+import numpy as np
+from scipy.sparse import diags
+from scipy.sparse.linalg import eigsh
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+# =========================================================
+# ■ 1. ターゲット（GUE）
+# =========================================================
+
+def generate_gue(N):
+    A = np.random.randn(N, N)
+    return (A + A.T) / 2
+
 M = 30
 eigvals = np.linalg.eigvalsh(generate_gue(M))
 eigvals = np.sort(eigvals)
