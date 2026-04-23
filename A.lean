@@ -4,6 +4,141 @@ from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 
 # =========================================================
+# ■ 1. GUE行列生成
+# =========================================================
+
+def generate_gue(N):
+    A = np.random.randn(N, N) + 1j*np.random.randn(N, N)
+    H = (A + A.conj().T) / 2
+    return H.real  # 実対称に落とす（GOE近似でもOK）
+
+# スペクトル取得
+M = 80
+H_rand = generate_gue(M)
+eigvals = np.sort(eigh(H_rand)[0])
+
+# スケール調整（ζ零点っぽくする）
+eigvals = eigvals - np.min(eigvals)
+eigvals = eigvals / np.max(eigvals)
+eigvals = eigvals * 2000  # スケーリング
+
+# 上位だけ使用
+k = 12
+target_lambda = eigvals[:k]
+
+
+# =========================================================
+# ■ 2. 空間離散化
+# =========================================================
+
+N = 500
+L = 20.0
+x = np.linspace(-L, L, N)
+dx = x[1] - x[0]
+
+diag = np.ones(N) * (-2.0)
+off  = np.ones(N-1)
+
+Lap = (np.diag(diag) + np.diag(off,1) + np.diag(off,-1)) / dx**2
+Lap = -Lap
+
+
+# =========================================================
+# ■ 3. フーリエ基底（高自由度）
+# =========================================================
+
+def basis(x, K=30):
+    B = [np.ones_like(x)]
+    for k in range(1, K):
+        B.append(np.sin(k * x / L * np.pi))
+        B.append(np.cos(k * x / L * np.pi))
+    return np.vstack(B)
+
+B = basis(x)
+nb = B.shape[0]
+
+def potential(c):
+    return np.dot(c, B)
+
+
+# =========================================================
+# ■ 4. 固有値計算
+# =========================================================
+
+def compute_eigs(c):
+    V = potential(c)
+    H = Lap + np.diag(V)
+    vals, _ = eigh(H)
+    return vals[:k]
+
+
+# =========================================================
+# ■ 5. 損失関数（安定版）
+# =========================================================
+
+weights = 1.0 / (target_lambda + 1e-6)
+
+def loss(c):
+    vals = compute_eigs(c)
+
+    err_spec = np.sum(weights * (vals - target_lambda)**2)
+
+    V = potential(c)
+    smooth = np.sum((np.diff(V,2))**2)
+    size = np.sum(c**2)
+
+    return err_spec + 1e-3 * smooth + 1e-4 * size
+
+
+# =========================================================
+# ■ 6. 最適化
+# =========================================================
+
+c0 = 0.01 * np.random.randn(nb)
+
+res = minimize(
+    loss,
+    c0,
+    method='L-BFGS-B',
+    options={'maxiter': 300}
+)
+
+c_opt = res.x
+V_opt = potential(c_opt)
+eig_opt = compute_eigs(c_opt)
+
+
+# =========================================================
+# ■ 7. 結果
+# =========================================================
+
+print("target λ:\n", target_lambda)
+print("approx λ:\n", eig_opt)
+print("error:", np.linalg.norm(eig_opt - target_lambda))
+
+
+# =========================================================
+# ■ 8. 可視化
+# =========================================================
+
+plt.figure()
+plt.plot(x, V_opt)
+plt.title("Recovered Potential (GUE-driven)")
+plt.grid()
+
+plt.figure()
+plt.plot(target_lambda, 'o-', label="target")
+plt.plot(eig_opt, 'x-', label="approx")
+plt.legend()
+plt.title("Spectrum Matching")
+
+plt.show()
+import numpy as np
+from scipy.linalg import eigh
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+# =========================================================
 # ■ 1. ζ零点（増やして安定化）
 # =========================================================
 
