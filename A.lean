@@ -1,4 +1,195 @@
 import numpy as np
+from scipy.sparse import diags
+from scipy.sparse.linalg import eigsh
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+# =========================================================
+# ■ 1. ターゲット（GUE）
+# =========================================================
+
+def generate_gue(N):
+    A = np.random.randn(N, N)
+    return (A + A.T) / 2
+
+M = 30
+eigvals = np.linalg.eigvalsh(generate_gue(M))
+eigvals = np.sort(eigvals)
+
+eigvals = eigvals - eigvals.min()
+eigvals = eigvals / eigvals.max()
+eigvals = eigvals * 150   # ★ 少し抑えめに
+
+k = 6
+target_lambda = eigvals[:k]
+
+# =========================================================
+# ■ 2. 空間
+# =========================================================
+
+N = 160
+L = 12.0
+x = np.linspace(-L, L, N)
+dx = x[1] - x[0]
+
+diag = np.ones(N) * (-2.0)
+off  = np.ones(N-1)
+
+Lap = diags([off, diag, off], [-1, 0, 1]) / dx**2
+Lap = -Lap
+
+# =========================================================
+# ■ 3. 基底
+# =========================================================
+
+def basis(x, K=10):
+    B = [np.ones_like(x)]
+    for k_ in range(1, K):
+        B.append(np.sin(k_ * np.pi * x / L))
+        B.append(np.cos(k_ * np.pi * x / L))
+    return np.vstack(B)
+
+B = basis(x)
+nb = B.shape[0]
+
+def potential(c):
+    return np.dot(c, B)
+
+# =========================================================
+# ■ 4. 固有値（安定）
+# =========================================================
+
+def compute_eigs(c):
+    V = potential(c)
+    H = Lap + diags(V, 0)
+
+    try:
+        vals = eigsh(
+            H,
+            k=k,
+            which='SM',
+            return_eigenvectors=False,
+            tol=1e-3
+        )
+    except:
+        return np.ones(k) * 1e6
+
+    vals = np.sort(np.asarray(vals).reshape(-1))
+
+    if len(vals) < k:
+        vals = np.pad(vals, (0, k - len(vals)), mode='edge')
+
+    return vals[:k]
+
+# =========================================================
+# ■ 5. collapse防止loss
+# =========================================================
+
+def loss(c):
+    vals = compute_eigs(c)
+
+    if not np.all(np.isfinite(vals)):
+        return 1e6
+
+    # -------------------------
+    # ■ scale補正（先にやる）
+    # -------------------------
+    scale = np.mean(vals / (target_lambda + 1e-8))
+    vals_scaled = vals / (scale + 1e-8)
+
+    # -------------------------
+    # ■ anchor
+    # -------------------------
+    err_anchor = (vals_scaled[0] - target_lambda[0])**2
+
+    # -------------------------
+    # ■ gap構造
+    # -------------------------
+    gap_v = np.diff(vals_scaled)
+    gap_t = np.diff(target_lambda)
+
+    err_gap = np.sum((gap_v - gap_t)**2)
+
+    # -------------------------
+    # ■ 統計
+    # -------------------------
+    gap_vn = gap_v / (np.mean(gap_v) + 1e-8)
+    gap_tn = gap_t / (np.mean(gap_t) + 1e-8)
+
+    err_stat = np.mean((np.sort(gap_vn) - np.sort(gap_tn))**2)
+
+    # -------------------------
+    # ■ FFT
+    # -------------------------
+    fft_v = np.abs(np.fft.rfft(vals_scaled))
+    fft_t = np.abs(np.fft.rfft(target_lambda))
+
+    fft_v /= np.sum(fft_v) + 1e-8
+    fft_t /= np.sum(fft_t) + 1e-8
+
+    err_fft = np.sum((fft_v - fft_t)**2)
+
+    # -------------------------
+    # ■ 正則化（弱め）
+    # -------------------------
+    V = potential(c)
+    smooth = np.sum((np.diff(V,2))**2)
+    size = np.sum(c**2)
+
+    return (
+        2.0 * err_gap +
+        1.5 * err_stat +
+        1.0 * err_fft +
+        5.0 * err_anchor +   # ★ 強制固定
+        10.0 * (scale - 1.0)**2 +  # ★ 最重要
+        1e-4 * smooth +
+        1e-5 * size
+    )
+
+# =========================================================
+# ■ 6. 最適化
+# =========================================================
+
+c0 = 0.01 * np.random.randn(nb)
+
+res = minimize(
+    loss,
+    c0,
+    method='L-BFGS-B',
+    options={'maxiter': 120}
+)
+
+c_opt = res.x
+
+# =========================================================
+# ■ 7. 結果
+# =========================================================
+
+vals = compute_eigs(c_opt)
+
+print("target:", target_lambda)
+print("approx:", vals)
+print("error:", np.linalg.norm(vals - target_lambda))
+
+# =========================================================
+# ■ 8. 可視化
+# =========================================================
+
+V_opt = potential(c_opt)
+
+plt.figure()
+plt.plot(x, V_opt)
+plt.title("Recovered Potential (collapse fixed)")
+plt.grid()
+
+plt.figure()
+plt.plot(target_lambda, 'o-', label="target")
+plt.plot(vals, 'x-', label="approx")
+plt.legend()
+plt.title("Spectrum")
+
+plt.show()
+import numpy as np
 from scipy.linalg import eigh
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
