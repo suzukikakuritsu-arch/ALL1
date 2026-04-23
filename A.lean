@@ -1,6 +1,136 @@
 import numpy as np
 from scipy.linalg import eigh
 from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+# =========================================================
+# ■ 1. ζ零点（増やして安定化）
+# =========================================================
+
+gamma = np.array([
+    14.134725, 21.022040, 25.010858, 30.424876,
+    32.935062, 37.586178, 40.918719, 43.327073,
+    48.005150, 49.773832
+])
+
+target_lambda = gamma**2 + 0.25
+k = len(target_lambda)
+
+# =========================================================
+# ■ 2. 空間離散化（改良）
+# =========================================================
+
+N = 300
+L = 12.0
+x = np.linspace(-L, L, N)
+dx = x[1] - x[0]
+
+# 2階差分ラプラシアン（Dirichlet境界）
+diag = np.ones(N) * (-2.0)
+off  = np.ones(N-1)
+
+Lap = (np.diag(diag) + np.diag(off,1) + np.diag(off,-1)) / dx**2
+Lap = -Lap
+
+# =========================================================
+# ■ 3. ポテンシャル（基底展開で安定化）
+# =========================================================
+
+# 基底：低次多項式 + ガウス
+def basis(x):
+    return np.vstack([
+        np.ones_like(x),
+        x,
+        x**2,
+        np.exp(-x**2),
+        x * np.exp(-x**2),
+        (x**2) * np.exp(-x**2)
+    ])
+
+B = basis(x)
+nb = B.shape[0]
+
+# 初期係数
+c0 = np.zeros(nb)
+c0[2] = 0.05  # 軽い調和項
+
+def potential(c):
+    return np.dot(c, B)
+
+# =========================================================
+# ■ 4. 固有値計算
+# =========================================================
+
+def compute_eigs(c):
+    V = potential(c)
+    H = Lap + np.diag(V)
+    vals, _ = eigh(H)
+    return vals[:k]
+
+# =========================================================
+# ■ 5. 正則化付き損失関数
+# =========================================================
+
+alpha_smooth = 1e-2
+alpha_size   = 1e-3
+
+def loss(c):
+    vals = compute_eigs(c)
+
+    # 固有値一致誤差
+    err_spec = np.sum((vals - target_lambda)**2)
+
+    # スムーズネス（2階差分）
+    V = potential(c)
+    smooth = np.sum((np.diff(V,2))**2)
+
+    # 係数の大きさ抑制
+    size = np.sum(c**2)
+
+    return err_spec + alpha_smooth * smooth + alpha_size * size
+
+# =========================================================
+# ■ 6. 最適化
+# =========================================================
+
+res = minimize(
+    loss,
+    c0,
+    method='L-BFGS-B',
+    options={'maxiter': 200}
+)
+
+c_opt = res.x
+V_opt = potential(c_opt)
+eig_opt = compute_eigs(c_opt)
+
+# =========================================================
+# ■ 7. 結果表示
+# =========================================================
+
+print("target λ:\n", target_lambda)
+print("approx λ:\n", eig_opt)
+print("L2 error:", np.linalg.norm(eig_opt - target_lambda))
+
+# =========================================================
+# ■ 8. 可視化
+# =========================================================
+
+plt.figure()
+plt.plot(x, V_opt)
+plt.title("Recovered Potential V(t)")
+plt.grid()
+
+plt.figure()
+plt.plot(target_lambda, 'o-', label="target")
+plt.plot(eig_opt, 'x-', label="approx")
+plt.legend()
+plt.title("Eigenvalue Matching")
+
+plt.show()
+import numpy as np
+from scipy.linalg import eigh
+from scipy.optimize import minimize
 
 # =========================================================
 # ■ 1. ζ零点（サンプル：既知の最初の値）
